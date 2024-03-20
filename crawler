@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+import ssl
+import urlparse.parse
+import html
+import html.parser
+import xml
+
+
+DEFAULT_SERVER = "www.3700.network"
+DEFAULT_PORT = 443
+LOGIN_SUFFIX = '/accounts/login/?next=/fakebook/'
+
+SSL_CONTEXT = ssl.create_default_context()
+
+class Crawler:
+    def __init__(self, args):
+        self.server = args.server
+        self.port = args.port
+        self.username = args.username
+        self.password = args.password
+        mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mysocket = SSL_CONTEXT.wrap_socket(mysocket, server_hostname=self.server)
+        mysocket.connect((self.server, self.port))
+        self.socket = mysocket
+        self.urls = [];
+        self.csrf = ''
+        self.cookie = ''
+
+    def run(self):
+        data = self.get_request()
+
+    def get_request(self, path):
+        request = f'GET {path} HTTP/1.0\r\nHost: {self.server}:{self.port}\r\n\r\n'
+
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
+        self.socket.send(request.encode('ascii'));
+        return self.parse_response()
+    
+    def post_request(self):
+        request = "POST / HTTP/1.0\r\n\r\n"
+
+    def login(self):
+        headers, html = self.get_request('/accounts/login/?next=/fakebook/')
+                
+        csrf_token = 'token'
+        login_post = f'POST /accounts/login/id_username={self.username}&id_password={self.password}&csrfmiddlewaretoken={csrf_token}&next=/fakebook/ HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n\r\n'
+        
+
+    def handle_headers(self, headers):
+        for header in headers:
+            if header.find("set-cookie") >= 0:
+                # parses the following string to <cookie_or_token>, set-cookie: csrftoken=<cookie_or_token>;
+                header = header.split(";")[0]
+                cookie_and_header = header.split(" ")
+                set_cookie_type = cookie_and_header[1].split("=")[0]
+                cookie_or_token = cookie_and_header[1].split("=")[1]
+                if set_cookie_type == "csrftoken":
+                    self.csrf = cookie_or_token
+                if set_cookie_type == "sessionid":
+                    self.csrf = cookie_or_token
+
+    def handle_status_codes(self):
+        None
+
+    def next_page(self):
+        # Parse the url for the next anchored link to see if it is from this self.server
+        None
+
+    def parse_response(self):
+        data = self.socket.recv(1000).decode('ascii')
+        while data.find("</html>") == -1: 
+            data += self.socket.recv(1000).decode('ascii')
+        header_and_response = data.split('\r\n\r\n')
+        print(header_and_response[0])
+        parsed_header = header_and_response[0].split('\r\n')
+        start_of_doctype = header_and_response[-1].find('<!DOCTYPE')
+        html = header_and_response[-1][start_of_doctype:]
+        return parsed_header, html;
+        
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='crawl Fakebook')
+    parser.add_argument('-s', dest="server", type=str, default=DEFAULT_SERVER, help="The server to crawl")
+    parser.add_argument('-p', dest="port", type=int, default=DEFAULT_PORT, help="The port to use")
+    parser.add_argument('username', type=str, help="The username to use")
+    parser.add_argument('password', type=str, help="The password to use")
+    args = parser.parse_args()
+    sender = Crawler(args)
+    sender.run()

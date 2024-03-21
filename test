@@ -19,19 +19,27 @@ class FlagHTMLParser(HTMLParser):
 # flag = f"<html><header></header><h3>gaymen</h3><h3 class='secret_flag' style='color:red'>FLAG: 64-characters-of-random-alphanumerics</h3><h3 class='secret_flag' style='color:red'>FLAG: 64-characters-of-random-alphanumerics</h3><h3 class='secret_flag' style='color:red'>FLAG: second_flag</h3></html>"
 # FlagHTMLParser().feed(flag)
 
-DEFAULT_SERVER = "www.3700.network"
-DEFAULT_PORT = 443
+# DEFAULT_SERVER = "www.3700.network"
+# DEFAULT_PORT = 443
 
-mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-context = ssl.create_default_context()
-mysocket = context.wrap_socket(mysocket, server_hostname=DEFAULT_SERVER)
-mysocket.connect((DEFAULT_SERVER, DEFAULT_PORT))
+# mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# context = ssl.create_default_context()
+# mysocket = context.wrap_socket(mysocket, server_hostname=DEFAULT_SERVER)
+# mysocket.connect((DEFAULT_SERVER, DEFAULT_PORT))
 
-request = f'GET / HTTP/1.0\r\nHost: {DEFAULT_SERVER}:{DEFAULT_PORT}\r\n\r\n'
-print(request)
-mysocket.send(request.encode('ascii'))
-data = mysocket.recv(1000).decode("utf-8")
-while data.find("</html>") == -1 and data.find('close') == -1:
-    data += mysocket.recv(1000).decode("utf-8")
-print(data)
-header_and_response = data.split("\r\n\r\n")
+# request = f'GET / HTTP/1.0\r\nHost: {DEFAULT_SERVER}:{DEFAULT_PORT}\r\n\r\n'
+# print(request)
+# mysocket.send(request.encode('ascii'))
+# data = mysocket.recv(1000).decode("utf-8")
+# while data.find("</html>") == -1 and data.find('close') == -1:
+#     data += mysocket.recv(1000).decode("utf-8")
+# print(data)
+# header_and_response = data.split("\r\n\r\n")
+
+from urllib.parse import urlparse
+
+parser = urlparse('mailto:systems-stt-admin@zimbra.ccs.neu.edu')
+print(parser) 
+print(parser.path.find('@'))
+parser = urlparse('/fakebook/')
+print(parser) 

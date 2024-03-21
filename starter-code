@@ -4,8 +4,10 @@ import argparse
 import socket
 import ssl
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 DEFAULT_SERVER = "www.3700.network"
+LOGIN_PATH = "/accounts/login/?next=/fakebook/"
 DEFAULT_PORT = 443
 
 
@@ -18,7 +20,7 @@ class LinkHTMLParser(HTMLParser):
         if tag == "a":
             for attr in attrs:
                 if attr[0] == "href":
-                    self.crawler.appendLink(attr[1])
+                    self.crawler.append_link(attr[1])
 
 class FlagHTMLParser(HTMLParser):
     def __init__(self, crawler):
@@ -27,111 +29,129 @@ class FlagHTMLParser(HTMLParser):
 
     def handle_data(self, data: str):
         if data.find('FLAG') >= 0:
-            self.crawler.appendFlag(data.split(" ")[1])
-
-class CSRFHTMLParser(HTMLParser):
-    def __init__(self, crawler):
-        HTMLParser.__init__(self)
-        self.crawler: Crawler = crawler
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "input":
-            for attr in attrs:
-                if attr[0] == "name":
-                    if attr[1] == "csrfmiddlewaretoken":
-                        for attr in attrs:
-                            if attr[0] == "value":
-                                self.crawler.setCSRF(attr[1])
-
+            self.crawler.append_flag(data.split(" ")[1])
 
 class Crawler:
+    """ Web Crawler for CS4700
+    """
     def __init__(self, args):
         self.server = args.server
         self.port = args.port
         self.username = args.username
         self.password = args.password
-        self.html_parser = LinkHTMLParser(self)
-        self.csrf_parser = CSRFHTMLParser(self)
+        self.link_parser = LinkHTMLParser(self)
         self.flag_parser = FlagHTMLParser(self)
         self.csrf_token = None
         self.session_id = None
-        self.links = set()
+        self.link_frontier = dict()
+        self.curr_link = None
         self.flags = set()
         self.socket = self.connect_socket()
 
     def connect_socket(self):
+        """Connects a new socket to the server and port
+
+        Returns:
+            Socket: Connected socket to the <server>:<socket>
+        """
         mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         context = ssl.create_default_context()
         mysocket = context.wrap_socket(mysocket, server_hostname=self.server)
         mysocket.connect((self.server, self.port))
         return mysocket
 
-    def setCSRF(self, token):
-        self.csrf_token = token
+    def append_link(self, link):
+        """Appends a non-duplicate link if it is valid 
+           (includes the <server>:<port> as it's url domain)
 
-    def appendLink(self, link):
-        if (link not in self.links):
-            self.links.add(link)
-            
-        
-    def appendFlag(self, flag):
-        if (flag not in self.flags):
+        Args:
+            link str: is the new possible link
+        """
+        url_parse = urlparse(link)
+        netloc = url_parse.netloc
+        if self.link_frontier.get(link, None) is None and (netloc == f'{self.server}:{self.port}' or netloc == ''):
+            self.link_frontier[link] = False;
+            print(f"new link: {link}")
+
+    def append_flag(self, flag):
+        """Appends a non-duplicate secret flag and prints it out
+
+        Args:
+            flag str: 64 character alphabetic flag/sequence
+        """
+        if flag not in self.flags:
             self.flags.add(flag)
             print(flag)
 
     def run(self):
-        self.get_request("/accounts/login/?next=/fakebook/")
-        self.read_response()
-        login_data = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrf_token}&next=/fakebook/"
-        login_post = f"POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nConnection: Close\r\nContent-Length: {str(len(login_data))}\r\nContent-Type: application/x-www-form-urlencoded\r\nCookie: csrftoken={self.csrf_token}; sessionid={self.session_id}\r\n\r\n{login_data}\r\n\r\n"
-        print(f"Request to {self.server}:{self.port}")
-        print(login_post)
-        self.socket.send(login_post.encode("ascii"))
-        self.read_response()
+        """Run method, starts the crawler's web crawling
+        """
+        self.login()
 
     def get_request(self, path):
-        request = f"GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n{self.get_cookies()}\r\n"
+        """Sends GET HTTP Request to a path at the current <server>:<port>
+
+        Args:
+            path (_type_): _description_
+        """
+        request = f"GET {path} HTTP/1.1\r\nHost: {self.server}:{self.port}\r\n"
+        request += f"{self.get_cookies()}\r\n"
         print(f"Request to {self.server}:{self.port}")
         print(request)
         self.socket.send(request.encode("utf-8"))
 
-    def read_response(self):
+    def read_response(self, link):
+        """Reads the HTTP Response and parses the response
+        """
         data = self.socket.recv(1024).decode("utf-8")
         while data.find("</html>") == -1 and data.find('content-length: 0') == -1:
             data += self.socket.recv(1024).decode("utf-8")
         header_and_response = data.split("\r\n\r\n")
-        self.handle_response(header_and_response)
+        print(header_and_response[0])
+        self.handle_response(header_and_response, link)
 
-    def handle_response(self, full_response):
+    def handle_response(self, full_response, link):
+        """Handles the full response
+           Headers gets parsed for status code, set-Cookies and location (for redirect)
+           HTML gets parsed for secret flags and links
+           
+        Args:
+            full_response Tuple of 2 str: strings in the format [Headers, Response Data]
+        """
         headers = full_response[0].split("\r\n")
         # Example Split: ['HTTP.1.1', '302', 'Found']
-        status_header = headers[0].split()
-        print(status_header)
+        status_header = headers[0].split(" ")
         status_code = int(status_header[1])
         if status_code == 200:
             # Success
+            # print("Success 200")
+            self.link_frontier[link] = True
             self.parse_cookie(headers, 'csrftoken')
             self.parse_cookie(headers, 'sessionid')
             start_of_doctype = full_response[-1].find("<!DOCTYPE")
             html = full_response[-1][start_of_doctype:]
-            # self.csrf_parser.feed(html)
             self.flag_parser.feed(html)
-            # print(html)
-            return html
+            self.link_parser.feed(html)
+            return
         elif status_code == 302:
             # Redirect
+            self.link_frontier[link] = True
             self.parse_cookie(headers, 'csrftoken')
+            self.parse_cookie(headers, 'sessionid')
             location_header = self.find_header(headers, 'location')
             location = location_header.split(" ")[1]
             self.socket = self.connect_socket()
+            print(f"redirect to {location}")
             self.get_request(location)
-            self.read_response()
+            self.read_response(location)
+            return
         elif status_code == 403 or status_code == 404:
             # Abandon the url
-            print(full_response)
+            self.link_frontier.pop(link)
+            return
         elif status_code == 502:
             # No service, Re-try
-            None
+            return
     
     def find_header(self, headers, header_name: str):
         """Finds the header given the headers and header name
@@ -156,12 +176,14 @@ class Crawler:
         """
         header = self.find_header(headers, token_name)
         if header is None:
+            # print(f"Could not find header name: {token_name}")
             return
         # parses the following string to <cookie_or_token>, set-cookie: sessionid=<cookie_or_token>;
         header = header.split(";")[0]
         cookie_and_header = header.split(" ")
         set_cookie_type = cookie_and_header[1].split("=")[0]
         cookie_or_token = cookie_and_header[1].split("=")[1]
+        print(f'type of cookie: {set_cookie_type}, cookie value: {cookie_or_token}')
         if set_cookie_type == "sessionid" :
             self.session_id = cookie_or_token
         if set_cookie_type == "csrftoken":
@@ -176,14 +198,24 @@ class Crawler:
         cookie = 'Cookie: '
         if self.session_id is not None:
             cookie += f'sessionid={self.session_id}; '
-        if self.csrf_parser is not None:
+        if self.csrf_token is not None:
             cookie += f'csrftoken={self.csrf_token}'
         if cookie == 'Cookie: ':
             return ''
         else:
             cookie += '\r\n'
         return cookie
-            
+           
+    def login(self):
+        self.get_request(LOGIN_PATH)
+        self.read_response(LOGIN_PATH)
+        login_data = f"username={self.username}&password={self.password}&csrfmiddlewaretoken={self.csrf_token}&next=/fakebook/"
+        login_post = f"POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\nHost: {self.server}:{self.port}\r\nConnection: Close\r\nContent-Length: {str(len(login_data))}\r\nContent-Type: application/x-www-form-urlencoded\r\nCookie: csrftoken={self.csrf_token}; sessionid={self.session_id}\r\n\r\n{login_data}\r\n\r\n"
+        print(f"Request to {self.server}:{self.port}")
+        print(login_post)
+        self.socket.send(login_post.encode("utf-8"))
+        self.read_response(LOGIN_PATH)
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="crawl Fakebook")
